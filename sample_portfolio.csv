@@ -1,0 +1,6 @@
+Symbol,Name,Type,Date,Shares,Price,Amount,Brokerage,STT,Charges,Receivable,Mode
+NSE:VBL,Varun Beverages,Buy,"Apr 08, 2016",99,445,-44055,1.51,44,6.55,-44107.06,del
+NSE:VBL,Varun Beverages,Sell,"Apr 17, 2017",99,403.45,39941.55,199.71,40,35.47,39666.37,del
+BOM:540678,Cochin Shipyard,Buy,"Aug 10, 2017",30,411,-12330,0.01,12,3.31,-12345.32,del
+BOM:540678,Cochin Shipyard,Sell,"Sep 10, 2017",30,311,9330,0.01,9,2.31,9318.68,del
+BOM:540716,ICICI Lombard,Buy,"Sep 27, 2017",39,661,-25779,0.01,25,5.01,-25809.02,del

@@ -1,19 +1,27 @@
-# Equity Portfolio Summarizer
-* Given the equity portfolio transactions as a CSV file, you can get a summary of the portfolio with information about realized and unrealized gain/loss for each stock as well as for the whole portfolio.
-* Only transactions on Indian Stock exchanges NSE and BSE are supported as of now.
-* It also classifies the gain/loss as Short Term or Long Term capital gains according to Indian income tax laws.
+# Indian Equity Portfolio Summarizer
+* Given the equity portfolio transactions as a CSV file(refer `sample_portfolio.csv` in the repository), you can get the following information:
+  * For each stock:
+    * one line realized summary with the short term realized gain/loss, long term realized gain/loss and total realized gain/loss
+    * details on each sell transaction where a gain or loss was realized, matched against its buy transaction
+    * one line holding summary with the short term unrealized gain/loss, long term unrealized gain/loss and total unrealized gain/loss
+    * details on each buy transaction where there is no corresponding sell transaction
+  * For whole portfolio:
+    * Realized Summary - one line per stock giving the short term and long term gain/loss realized from the stock
+    * Holding Summary - one line per stock which are being held with the short and long term unrealized gain/loss from the stock
+* Only transactions on Indian Stock exchanges NSE and BSE are supported.
+* It also classifies the gain/loss as Short Term or Long Term capital gains according to Indian income tax laws. At the time of this writing, any gain/loss realized by selling a stock after one year since buying will be Long term capital gain and the same realized within one year would be Short term capital gain.
 
 ## Requirements to run this code ##
-* Transactions in a CSV file in the format explained below
+* Transactions in a CSV file in the format explained below (you can refer `sample_portfolio.csv` in the repository)
 * Python 2.7 or any version higher than that
 * _googlefinance_ library for python. If you have _pip_, it is as simple as running the command `pip install googlefinance`
 * Other libraries like `csv, json, requests, decimal, collections, texttable` are also being used.
 
 ## Transactions File ##
-The first line needs to contain the header given below. It contains various fields that define a transaction.
-___Symbol,Name,Type,Date,Shares,Price,Amount,Brokerage,STT,Charges,Receivable,Mode___
-Each line after the header represents a transaction with the transaction values specified in the same order as that of the header fields.
-
+* The first line of the file needs to contain the header given in the next line. It contains various fields that define a transaction.
+* ___Symbol,Name,Type,Date,Shares,Price,Amount,Brokerage,STT,Charges,Receivable,Mode___
+* Each line after the header represents a transaction with the transaction values specified in the same order as that of the header fields.
+* ___The transactions should be listed in chronological order in this file___
 * _Symbol_ - stock ticker value including the stock exchange informatio. For example, _NSE:VBL_ stands for _Varun Beverages_ in _NSE_, _BOM:500285_ stands for _Spicejet_ in _BSE_.
 * _Name_ - name of the entity as given by the user
 * _Type_ - value can be _Buy_ or _Sell_
@@ -26,10 +34,8 @@ Each line after the header represents a transaction with the transaction values 
 * _Charges_ - all other charges for this transaction combined into this one component. This can include Stamp Duty, Transaction Charges, Service Charges and SEBI Turnover Tax.
 * Receivable - This is the amount you will get after adjusting the _Amount_ for _Brokerage_, _STT_ and _Charges_. This is basically _Amount_ - (_Brokerage_ + _STT_ + _Charges_). You shell out more than what is required to buy the stock and you get lesser than the sale amount when you sell the stock
 * Mode - This is the type of trade. Its value can be _del_ or _sqr_. _del_ stands for delivery mode/cash and carry, _sqr_ stands for intra-day square off trade
-* ___Any line starting with a pound sign is ignored. You can use this to have comments or some notes___
-* ___The transactions should be listed in chronological order in this file___
 
-### Sample Transactions File (say `portfolio.csv`) ###
+## Sample Transactions File (contents of `sample_portfolio.csv` in the repository has been reproduced here) ##
 ```
 Symbol,Name,Type,Date,Shares,Price,Amount,Brokerage,STT,Charges,Receivable,Mode
 NSE:VBL,Varun Beverages,Buy,"Apr 08, 2016",99,445,-44055,1.51,44,6.55,-44107.06,del
@@ -38,12 +44,12 @@ BOM:540678,Cochin Shipyard,Buy,"Aug 10, 2017",30,411,-12330,0.01,12,3.31,-12345.
 BOM:540678,Cochin Shipyard,Sell,"Sep 10, 2017",30,311,9330,0.01,9,2.31,9318.68,del
 BOM:540716,ICICI Lombard,Buy,"Sep 27, 2017",39,661,-25779,0.01,25,5.01,-25809.02,del
 ```
-### Running the code ###
+## Running the code ##
 `
-python equity_stats.py portfolio.csv > output.txt
+python equity_stats.py sample_portfolio.csv > output.txt
 `
 
-### Sample Output ###
+## Sample Output ##
 * b_ - stands for buy; For example, b_date - buy date, b_charges - charges incurred during buy, b_value - buy value
 * s_ - stands for sell; For example, s_date - sell date, b_charges - charges incurred during sell, s_value - sell value
 * n_ - stands for net; n_charges - net charges (buy+sell), n_realized - net realized

@@ -5,7 +5,7 @@
 * Includes a queue to hold transactions, constants involved in a transaction
 * Author: Sriram Ponnusamy, feel free to use and distribute
 """
-import math
+import math, datetime
 from collections import namedtuple
 from dateutil.parser import parse as date_parse
 from decimal import Decimal, getcontext, ROUND_HALF_UP
@@ -38,21 +38,37 @@ class TransactionQueue(object):
 
 
 class TransactionConstants(object):
-
+    """
+    defines all constants possible in a transaction
+    """
+    # trade types
     BUY = 'Buy'
     SEL = 'Sell'
     DIV = 'Dividend'
+    CSI = 'CashIn'
+    CSO = 'CashOut'
+    TRADE_TYPES = [BUY, SEL, DIV, CSI, CSO]
+
+    # modes
     SQR = 'sqr'
     DEL = 'del'
+    CAS = 'cash'
+    MODES = [SQR, DEL, CAS]
+
     # rounding off
-    DECIMAL_TEN = Decimal('10')
-    ROUND_2 = DECIMAL_TEN ** -2
-    ROUND_3 = DECIMAL_TEN ** -3
-    ROUND_4 = DECIMAL_TEN ** -4
+    DEC_TEN = Decimal('10')
+    ROUND_2 = DEC_TEN ** -2
+    ROUND_3 = DEC_TEN ** -3
+    ROUND_4 = DEC_TEN ** -4
+
+    # sale date from when LTCG becomes taxable
+    APR01_2018 = datetime.datetime(2018, 4, 1).date()
+
+    # various precision methods for numbers
 
     @classmethod
     def precision_int(klass, dec_x):
-        return dec_x.quantize(klass.DECIMAL_TEN, rounding=ROUND_HALF_UP)
+        return dec_x.quantize(klass.DEC_TEN, rounding=ROUND_HALF_UP)
 
     @classmethod
     def precision_4(klass, dec_x):
@@ -66,47 +82,93 @@ class TransactionConstants(object):
     def precision_2(klass, dec_x):
         return dec_x.quantize(klass.ROUND_2, rounding=ROUND_HALF_UP)
 
-TRANSACTION_FIELDS = [
-    'symbol', 'name', 'trade', 'date', 'shares', 'price', 'value',
-    'brokerage', 'stt', 'charges', 'receivable', 'mode'
-]
+    # transaction csv file columns
+    SYMBOL_F        = 'symbol'
+    NAME_F          = 'name'
+    TRADE_F         = 'trade'
+    DATE_F          = 'date'
+    SHARES_F        = 'shares'
+    PRICE_F         = 'price'
+    VALUE_F         = 'value'
+    BROKERAGE_F     = 'brokerage'
+    STT_F           = 'stt'
+    CHARGES_F       = 'charges'
+    RECEIVABLE_F   = 'receivable'
+    MODE_F          = 'mode'
 
-_TransactionRecord = namedtuple('_TransactionRecord', TRANSACTION_FIELDS)
-class TransactionRecord(_TransactionRecord, TransactionConstants):
+    # order of transaction fields
+    TRANSACTION_FIELDS = [
+        SYMBOL_F, NAME_F, TRADE_F, DATE_F, SHARES_F, PRICE_F, VALUE_F,
+        BROKERAGE_F, STT_F, CHARGES_F, RECEIVABLE_F, MODE_F
+    ]
+    # fields to be modified for types
+    MOD_DATE_LIST   = [DATE_F]
+    MOD_INT_LIST    = [SHARES_F]
+    MOD_PR3_LIST    = [PRICE_F, VALUE_F, BROKERAGE_F, STT_F, CHARGES_F, RECEIVABLE_F]
+
+
+
+class TransactionRecord(TransactionConstants):
+
+    _TransactionRecord = namedtuple('_TransactionRecord', TransactionConstants.TRANSACTION_FIELDS)
 
     @classmethod
     def parse(klass, row):
-        row = list(row)
-        row[3] = date_parse(row[3]).date()
-        row[4:-1] = map(Decimal, row[4:-1])
-        for i in (4,):
-            row[i] = klass.precision_int(row[i])
-        for i in (5,6,7,8,9,10):
-            row[i] = klass.precision_3(row[i])
-        return klass(*row)
+        """
+        transform raw csv row coming from the transactions file
+        create namedtuple object with the transformed values
+        """
+        oldobj = klass._TransactionRecord(*row)
+        newrow = klass.transform_namedtuple(oldobj)
+        newobj = klass._TransactionRecord(*newrow)
+        klass.validate(newobj)
+        return newobj
+
+    @classmethod
+    def transform_namedtuple(klass, obj):
+        """
+        transform string values to required types - date, decimal numbers
+        Decimals can be integers or with required precision
+        """
+        newrow = list(obj)
+        obj_index = obj._fields.index
+        for field in klass.MOD_DATE_LIST:
+            index = obj_index(field)
+            newrow[index] = date_parse(obj[index]).date()
+        for field in klass.MOD_INT_LIST:
+            index = obj_index(field)
+            newrow[index] = klass.precision_int(Decimal(obj[index]))
+        for field in klass.MOD_PR3_LIST:
+            index = obj_index(field)
+            newrow[index] = klass.precision_3(Decimal(obj[index]))
+        return newrow
 
     @classmethod
     def scale_down(klass, transaction, rem_shares):
-        dec_rem_shares = Decimal(rem_shares)
-        t = list(transaction)   # transaction has all numbers as Decimal objects
-        diff_ratio = dec_rem_shares/t[4]
-        t[4] = klass.precision_int(dec_rem_shares)
-        t[8] = klass.precision_3(diff_ratio * t[8])
-        #t[8] = klass.precision_int(new_stt)
-        for i in (6,7,9):
-            t[i] = klass.precision_3(diff_ratio * t[i])
-        t[10] = klass.precision_3(t[6] - sum(t[7:10]))
-        return klass(*t)
+        t_index = transaction._fields.index
+        value_index, recv_index, shares_index = map(t_index, (klass.VALUE_F, klass.RECEIVABLE_F, klass.SHARES_F))
+        charges_index_list = map(t_index, (klass.BROKERAGE_F, klass.STT_F, klass.CHARGES_F))
+        diff_ratio = rem_shares/transaction.shares
+        newt = list(transaction)
+        newt[shares_index] = rem_shares
+        for index in [value_index] + charges_index_list:
+            newt[index] = klass.precision_3(diff_ratio * newt[index])
+        charges = sum([newt[index] for index in charges_index_list])
+        newt[recv_index] = klass.precision_3(newt[value_index] - charges)
+        newobj = klass._TransactionRecord(*newt)
+        klass.validate(newobj)
+        return newobj
 
-    def validate(self):
-        assert self.symbol and self.name
-        assert self.trade in (self.BUY, self.SEL, self.DIV)
-        assert self.mode in (self.SQR, self.DEL)
-        if self.trade == self.DIV:
+    @classmethod
+    def validate(klass, transaction):
+        assert transaction.symbol and transaction.name
+        assert transaction.trade in klass.TRADE_TYPES
+        assert transaction.mode in klass.MODES
+        if transaction.trade in (klass.DIV, klass.CSO, klass.CSI):
             return
-        assert self.shares > 0
-        assert self.price > 0
-        assert self.brokerage > 0
-        assert self.stt >= 0
-        assert self.charges > 0
+        assert transaction.shares >= 0
+        assert transaction.price > 0
+        assert transaction.brokerage >= 0
+        assert transaction.stt >= 0
+        assert transaction.charges >= 0
 

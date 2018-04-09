@@ -1,12 +1,17 @@
 #!/usr/bin/env python
+import sys
 import csv
-import copy
+
 from transaction_utils import TransactionQueue, TransactionConstants
-from transaction_utils import TransactionRecord
+from transaction_utils import TransactionRecord, Decimal
 from reports_summary import StockSummary, PortFolioSummary
 
 class Stock(TransactionConstants):
-
+    """
+        object to hold transactions of a particular stock
+        sell transactions maintained in one queue
+        buy transactions square off, delivery are maintained in separate queues
+    """
     def __init__(self, symbol, name):
         self.symbol = symbol
         self.name   = name
@@ -14,9 +19,6 @@ class Stock(TransactionConstants):
         self.sbuyq  = TransactionQueue()
         self.sellq  = TransactionQueue()
         self.diviq  = TransactionQueue()
-        self._dbuyq = None
-        self._sbuyq = None
-        self._diviq = None
         # reports
         self.realized_list = []
         self.stock_summary = StockSummary(self)
@@ -31,14 +33,10 @@ class Stock(TransactionConstants):
                 self.dbuyq.put(transaction, front)
         elif transaction.trade == self.SEL:
             self.sellq.put(transaction, front)
-        else:
+        elif transaction.trade in (self.CSI, self.CSO):
             pass
-            #raise Exception("unknown transaction trade: %s" % (transaction,))
-
-    def preserve_transactions(self):
-        self._dbuyq = copy.deepcopy(self.dbuyq)
-        self._sbuyq = copy.deepcopy(self.sbuyq)
-        self._sellq = copy.deepcopy(self.sellq)
+        else:
+            raise Exception("unknown transaction: %s" % (transaction,))
 
     def realize_one(self, sel_t, buy_t, swap=False):
         if swap == True:
@@ -66,21 +64,50 @@ class Stock(TransactionConstants):
         assert self.sellq.is_empty() == True
         assert self.sbuyq.is_empty() == True
 
-    def get_realized_buy_value(self):
-        sum1 = sum([buy_t.value for buy_t in self._dbuyq])
-        sum2 = sum([buy_t.value for buy_t in self._sbuyq])
-        return -1*(sum1+sum2)
+class CapitalGains(TransactionConstants):
 
-    def get_holding_value(self):
-        sum1 = sum([buy_t.value for buy_t in self.dbuyq])
-        return -1*sum1
+    def __init__(self):
+        self.jan31_price_hash = {}
 
-    def get_realized_sell_value(self):
-        return sum([sel_t.value for sel_t in self.sellq])
+    def set_jan31_price_hash(self, prefix, filename):
+        fp = open(filename, 'rUb')
+        fp.next()
+        for line in fp:
+            row = line.strip().split(',')
+            symbol, price = row[0], row[8]
+            key = '%s:%s' % (prefix, symbol)
+            self.jan31_price_hash[key] = self.precision_4(Decimal(price))
+        fp.close()
+
+    def grandfather_jan31_price(self, symbol, buy_tp, sel_tp):
+        new_bp = buy_tp
+        jan31_p = self.jan31_price_hash[symbol]
+        if jan31_p > buy_tp:
+            if sel_tp >= jan31_p:
+                new_bp = jan31_p
+            elif sel_tp < jan31_p and sel_tp >= buy_tp:
+                new_bp = sel_tp
+        return new_bp, jan31_p
+
+    def classify_term(self, buy_td, sel_td):
+        assert sel_td >= buy_td
+        date_diff = sel_td - buy_td
+        if date_diff.days > 365:
+            return 'long'
+        return 'short'
+
+    def main(self):
+        self.set_jan31_price_hash('NSE', 'lib/NSE_20180131.csv')
+        self.set_jan31_price_hash('BOM', 'lib/BSE_20180131.csv')
 
 
 class Portfolio(object):
-
+    """
+    maintains a hash of stock ticker to stock object
+    processes individual transactions from the file to create the stock hash
+    transactions are stored in the respective stock object queues
+    realize transactions for each stock object to find out realized, unrealized gains
+    """
     def __init__(self):
         self.stock_hash = {}
 
@@ -93,16 +120,23 @@ class Portfolio(object):
 
     def process_stocks(self):
         for symbol, stock_obj in self.stock_hash.iteritems():
-            stock_obj.preserve_transactions()
             stock_obj.realize_whole()
 
-import sys
-file_name = sys.argv[1]
-pf = Portfolio()
-transactions_file = open(file_name, "rUb")
-transactions_file.next()    # skip the header
-for transaction in map(TransactionRecord.parse, csv.reader(transactions_file)):
-    pf.process_transaction(transaction)
-pf.process_stocks()
-pfs = PortFolioSummary(pf)
-pfs.print_summary()
+
+def main():
+    file_name = sys.argv[1]
+    pf = Portfolio()
+    transactions_file = open(file_name, "rUb")
+    transactions_file.next()    # skip the header
+    for transaction in map(TransactionRecord.parse, csv.reader(transactions_file)):
+        pf.process_transaction(transaction)
+    pf.process_stocks()
+    cg = CapitalGains()
+    cg.main()
+    pfs = PortFolioSummary(pf, cg)
+    pfs.print_summary()
+
+
+if '__main__' == __name__:
+    main()
+

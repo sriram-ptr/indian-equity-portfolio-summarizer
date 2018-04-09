@@ -52,10 +52,12 @@ class RealizedSummary(object):
             if term == 'long':
                 ltrg = actual_gain
                 if sel_t.date >= cg_obj.APR01_2018:
-                    new_bp, jan31_p = cg_obj.grandfather_jan31_price(self.stock_obj.symbol, buy_t.price, sel_t.price)
+                    new_bp = buy_t.price
+                    if buy_t.date <= cg_obj.JAN31_2018:
+                        new_bp, jan31_p = cg_obj.grandfather_jan31_price(self.stock_obj.symbol, buy_t.price, sel_t.price)
                     tax_unit_gain = p3(sel_t.price - new_bp)
                     tax_realized = p3(sel_t.shares * tax_unit_gain)
-                    if tax_realized != p3(Decimal('0')):
+                    if tax_realized != p3(Decimal('0')):    # don't make charges alone count to tax
                         xtrg = tax_realized - net_charges
             elif term == 'short':
                 strg = actual_gain
@@ -129,11 +131,13 @@ class HoldingSummary(object):
             jan31_p = ''
             if term == 'long':
                 ltug = actual_gain
-                if today_date > cg_obj.APR01_2018:
-                    new_bp, jan31_p = cg_obj.grandfather_jan31_price(self.stock_obj.symbol, buy_t.price, market_price)
+                if today_date >= cg_obj.APR01_2018:
+                    new_bp = buy_t.price
+                    if buy_t.date <= cg_obj.JAN31_2018:
+                        new_bp, jan31_p = cg_obj.grandfather_jan31_price(self.stock_obj.symbol, buy_t.price, market_price)
                     tax_unit_gain = p3(market_price - new_bp)
                     tax_unrealized = p3(buy_t.shares * tax_unit_gain)
-                    if tax_unrealized != p3(Decimal('0')):
+                    if tax_unrealized != p3(Decimal('0')):    # don't make charges alone count to tax
                         xtug = tax_unrealized - net_charges
             elif term == 'short':
                 stug = actual_gain
@@ -161,18 +165,18 @@ class HoldingSummary(object):
         self.final_row[-1] = '%s%%' % p3((net_unrealized*100)/self.final_row[6])
 
 
-    def try_api_call(self, url):
+    def try_api_call(self, url, params):
         retries = 0
-        while retries < 4:
+        while retries < 6:
             retries += 1
-            time.sleep(1)
-            rsp = requests.get(url)
+            time.sleep(2)
+            rsp = requests.get(url, params=params)
             if rsp.status_code != 200:
-                print 'url = %s, retry count = %s, status = %s' % (url, retries, rsp.status_code)
+                print 'retry = %s, status = %s, params = %s' % (retries, rsp.status_code, params)
                 continue
             fin_data = json.loads(rsp.content)
             if "Error Message" in fin_data:
-                print 'url = %s, retry count = %s, status = %s, data = %s' % (url, retries, rsp.status_code, fin_data)
+                print 'retry = %s, status = %s, params = %s, data = %s' % (retries, rsp.status_code, params, fin_data)
                 continue
             break
         return rsp, fin_data
@@ -180,17 +184,20 @@ class HoldingSummary(object):
     def get_market_price(self):
         if self.stock_obj.symbol == 'Capital':
             return Decimal(0)
-        time.sleep(2)
+        time.sleep(1)
         market, symbol = self.stock_obj.symbol.split(':')
         if market == 'BOM':
             market = 'BSE'
-        url = "https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&apikey=417VIWXIWW71MYDT&market=%s&symbol=%s&interval=1min" % (market, symbol)
+        url = "https://www.alphavantage.co/query"
+        interval = '60min'
+        params = { 'apikey': '417VIWXIWW71MYDT', 'function': 'TIME_SERIES_INTRADAY', 'market': market, 'symbol': symbol, 'interval': interval }
+        #url = "https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&apikey=417VIWXIWW71MYDT&market=%s&symbol=%s&interval=60min" % (market, symbol)
         #url = "https://finance.google.com/finance?q=%s&output=json" % self.stock_obj.symbol
 
-        rsp, fin_data = self.try_api_call(url)
+        rsp, fin_data = self.try_api_call(url, params)
         try:
             last_refr = fin_data["Meta Data"]["3. Last Refreshed"]
-            market_price_str = fin_data["Time Series (1min)"][last_refr]["4. close"]
+            market_price_str = fin_data["Time Series (%s)" % interval][last_refr]["4. close"]
         except:
             print 'ERROR %s after RETRIES: %s' % (rsp.status_code, rsp.content)
             import pdb; pdb.set_trace()

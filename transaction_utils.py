@@ -61,8 +61,9 @@ class TransactionConstants(object):
     ROUND_3 = DEC_TEN ** -3
     ROUND_4 = DEC_TEN ** -4
 
-    # sale date from when LTCG becomes taxable
+    # buy and sale date from when LTCG becomes taxable
     APR01_2018 = datetime.datetime(2018, 4, 1).date()
+    JAN31_2018 = datetime.datetime(2018, 1, 31).date()
 
     # various precision methods for numbers
 

@@ -1,10 +1,123 @@
 #!/usr/bin/env python
 import sys
-import csv
+import datetime, time
+import json, requests
+import csv, re
 
 from transaction_utils import TransactionQueue, TransactionConstants
 from transaction_utils import TransactionRecord, Decimal
+import stock_exchange_tools
 from reports_summary import StockSummary, PortFolioSummary
+
+class CapitalGain(TransactionConstants):
+
+    JAN31_PRICE_HASH    = {}
+    JAN31_NSE_FILENAME  = 'lib/NSE_20180131.csv'
+    JAN31_BSE_FILENAME  = 'lib/BSE_20180131.csv'
+    FIELD_DELIMITER     = ','
+    SYMBOL_INDEX        = 0
+    PRICE_INDEX         = 8
+    IS_LOADED           = False
+
+    @classmethod
+    def set_jan31_price_hash(klass, prefix, filename):
+        fp = open(filename, klass.CSV_FILE_MODE)
+        fp.next()
+        for line in fp:
+            row = line.strip().split(klass.FIELD_DELIMITER)
+            symbol, price = row[klass.SYMBOL_INDEX], row[klass.PRICE_INDEX]
+            key = '%s:%s' % (prefix, symbol)
+            klass.JAN31_PRICE_HASH[key] = klass.precision_4(Decimal(price))
+        fp.close()
+
+    @classmethod
+    def load_31jan2018_price_hash(klass):
+        if klass.IS_LOADED == False:
+            klass.set_jan31_price_hash(klass.NSE_EXCH, 'lib/NSE_20180131.csv')
+            klass.set_jan31_price_hash(klass.BSE_EXCH, 'lib/BSE_20180131.csv')
+            klass.IS_LOADED = True
+
+    def __init__(self, sel_t, buy_t):
+        super(CapitalGain, self).__init__()
+        self.buy_t          = buy_t
+        self.sel_t          = sel_t
+        self.unit_pgain      = self.DECIMAL_ZERO
+        self.buy_value      = self.DECIMAL_ZERO
+        self.sel_value      = self.DECIMAL_ZERO
+        self.gross_gain     = self.DECIMAL_ZERO
+        self.buy_charges    = self.DECIMAL_ZERO
+        self.sel_charges    = self.DECIMAL_ZERO
+        self.net_charges    = self.DECIMAL_ZERO
+        self.net_gain       = self.DECIMAL_ZERO
+        self.gain_perc      = self.DECIMAL_ZERO
+        # tax related attributes below
+        self.gain_type      = self.SHORT_TERM
+        self.jan31_price    = self.DECIMAL_ZERO
+        self.tax_buy_price  = self.DECIMAL_ZERO
+        self.tax_unit_pgain = self.DECIMAL_ZERO
+        self.tax_buy_value  = self.DECIMAL_ZERO
+        self.tax_net_gain   = self.DECIMAL_ZERO
+        self.short_gain     = self.DECIMAL_ZERO
+        self.long_gain      = self.DECIMAL_ZERO
+        self.tax_long_gain  = self.DECIMAL_ZERO
+
+    def set_actual_gains(self):
+        buy_t = self.buy_t
+        sel_t = self.sel_t
+        self.buy_value = self.precision_3(buy_t.shares * buy_t.price)
+        self.sel_value = self.precision_3(sel_t.shares * sel_t.price)
+        self.unit_pgain = self.precision_4(sel_t.price - buy_t.price)
+        self.gross_gain = self.precision_3(sel_t.shares * self.unit_pgain)
+        self.buy_charges = self.precision_3(buy_t.brokerage + buy_t.stt + buy_t.charges)
+        self.sel_charges = self.precision_3(sel_t.brokerage + sel_t.stt + sel_t.charges)
+        self.net_charges = self.precision_3(self.sel_charges + self.buy_charges)
+        self.net_gain = self.precision_3(self.gross_gain - self.net_charges)
+        self.gain_perc = self.precision_3((self.net_gain/self.buy_value) * Decimal('100'))
+
+    def set_gain_type(self):
+        #print self.sel_t.date, self.buy_t.date
+        assert self.sel_t.date >= self.buy_t.date
+        date_diff = self.sel_t.date - self.buy_t.date
+        self.gain_type = self.SHORT_TERM
+        if date_diff.days > self.TERM_DAYS_DIFF:
+            self.gain_type = self.LONG_TERM
+
+    def set_tax_buy_price(self):
+        self.tax_buy_price = self.buy_t.price
+        if self.gain_type == self.SHORT_TERM:
+            return
+        assert self.gain_type == self.LONG_TERM
+        if self.sel_t.date < self.APR01_2018:
+            return
+        if self.buy_t.date > self.JAN31_2018:
+            return
+        symbol = self.buy_t.symbol
+        self.jan31_price = self.JAN31_PRICE_HASH[symbol]
+        if self.jan31_price > self.buy_t.price:
+            if self.sel_t.price >= self.jan31_price:
+                self.tax_buy_price = self.jan31_price
+            elif self.sel_t.price >= self.buy_t.price:
+                self.tax_buy_price = self.sel_t.price
+
+    def set_tax_gains(self):
+        buy_t = self.buy_t
+        sel_t = self.sel_t
+        self.tax_buy_value = self.precision_3(self.buy_t.shares * self.tax_buy_price)
+        self.tax_unit_pgain = self.precision_4(sel_t.price - self.tax_buy_price)
+        tax_gross_gain = self.precision_3(self.sel_t.shares * self.tax_unit_pgain)
+        self.tax_net_gain = self.precision_3(tax_gross_gain - self.net_charges)
+        if self.gain_type == self.SHORT_TERM:
+            self.short_gain = self.net_gain
+        elif self.gain_type == self.LONG_TERM:
+            self.long_gain = self.net_gain
+            self.tax_long_gain = self.tax_net_gain
+
+    def calculate(self):
+        self.__class__.load_31jan2018_price_hash()
+        self.set_actual_gains()
+        self.set_gain_type()
+        self.set_tax_buy_price()
+        self.set_tax_gains()
 
 class Stock(TransactionConstants):
     """
@@ -19,8 +132,8 @@ class Stock(TransactionConstants):
         self.sbuyq  = TransactionQueue()
         self.sellq  = TransactionQueue()
         self.diviq  = TransactionQueue()
-        # reports
         self.realized_list = []
+        self.holding_list = []
         self.stock_summary = StockSummary(self)
 
     def put_transaction_to_queue(self, transaction, front=False):
@@ -57,48 +170,39 @@ class Stock(TransactionConstants):
             buy_t = buy_q_hash[sel_t.mode].get()
             if sel_t.shares >= buy_t.shares:
                 realized_t = self.realize_one(sel_t, buy_t, False)
-                self.realized_list.append((realized_t, buy_t))
+                cg_obj = CapitalGain(realized_t, buy_t)
+                #self.realized_list.append((realized_t, buy_t))
             else:
                 realized_t = self.realize_one(sel_t, buy_t, True)
-                self.realized_list.append((sel_t, realized_t))
+                cg_obj = CapitalGain(sel_t, realized_t)
+                #self.realized_list.append((sel_t, realized_t))
+            self.realized_list.append(cg_obj)
         assert self.sellq.is_empty() == True
         assert self.sbuyq.is_empty() == True
 
-class CapitalGains(TransactionConstants):
+    def holding_whole(self):
+        if self.dbuyq.size() <= 0:
+            return
+        ref_date = datetime.datetime.today().date()
+        market_price = self.get_market_price()
+        print self.symbol, market_price
+        while self.dbuyq.is_empty() == False:
+            buy_t = self.dbuyq.get()
+            sel_t = TransactionRecord.get_ref_sel_transaction(buy_t, ref_date, market_price)
+            cg_obj = CapitalGain(sel_t, buy_t)
+            self.holding_list.append(cg_obj)
+        assert self.dbuyq.is_empty() == True
 
-    def __init__(self):
-        self.jan31_price_hash = {}
-
-    def set_jan31_price_hash(self, prefix, filename):
-        fp = open(filename, 'rUb')
-        fp.next()
-        for line in fp:
-            row = line.strip().split(',')
-            symbol, price = row[0], row[8]
-            key = '%s:%s' % (prefix, symbol)
-            self.jan31_price_hash[key] = self.precision_4(Decimal(price))
-        fp.close()
-
-    def grandfather_jan31_price(self, symbol, buy_tp, sel_tp):
-        new_bp = buy_tp
-        jan31_p = self.jan31_price_hash[symbol]
-        if jan31_p > buy_tp:
-            if sel_tp >= jan31_p:
-                new_bp = jan31_p
-            elif sel_tp < jan31_p and sel_tp >= buy_tp:
-                new_bp = sel_tp
-        return new_bp, jan31_p
-
-    def classify_term(self, buy_td, sel_td):
-        assert sel_td >= buy_td
-        date_diff = sel_td - buy_td
-        if date_diff.days > 365:
-            return 'long'
-        return 'short'
-
-    def main(self):
-        self.set_jan31_price_hash('NSE', 'lib/NSE_20180131.csv')
-        self.set_jan31_price_hash('BOM', 'lib/BSE_20180131.csv')
+    def get_market_price(self):
+        time.sleep(1)
+        market, symbol = self.symbol.split(':')
+        market_price = '0'
+        if market == 'BOM':
+            market = 'BSE'
+            market_price = stock_exchange_tools.bseindia_scraper(market, symbol)
+        elif market == 'NSE':
+            market_price = stock_exchange_tools.nseindia_scraper(market, symbol)
+        return self.precision_3(Decimal(market_price))
 
 
 class Portfolio(object):
@@ -121,19 +225,18 @@ class Portfolio(object):
     def process_stocks(self):
         for symbol, stock_obj in self.stock_hash.iteritems():
             stock_obj.realize_whole()
+            stock_obj.holding_whole()
 
 
 def main():
     file_name = sys.argv[1]
     pf = Portfolio()
-    transactions_file = open(file_name, "rUb")
+    transactions_file = open(file_name, TransactionConstants.CSV_FILE_MODE)
     transactions_file.next()    # skip the header
     for transaction in map(TransactionRecord.parse, csv.reader(transactions_file)):
         pf.process_transaction(transaction)
     pf.process_stocks()
-    cg = CapitalGains()
-    cg.main()
-    pfs = PortFolioSummary(pf, cg)
+    pfs = PortFolioSummary(pf)
     pfs.print_summary()
 
 

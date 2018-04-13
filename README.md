@@ -4,18 +4,21 @@
     * one line realized summary with the short term realized gain/loss, long term realized gain/loss and total realized gain/loss
     * details on each sell transaction where a gain or loss was realized, matched against its buy transaction
     * one line holding summary with the short term unrealized gain/loss, long term unrealized gain/loss and total unrealized gain/loss
-    * details on each buy transaction where there is no corresponding sell transaction
+    * details on each buy transaction where there is no corresponding sell transaction (shares being held)
   * For whole portfolio:
     * Realized Summary - one line per stock giving the short term and long term gain/loss realized from the stock
     * Holding Summary - one line per stock which are being held with the short and long term unrealized gain/loss from the stock
 * Only transactions on Indian Stock exchanges NSE and BSE are supported.
-* It also classifies the gain/loss as Short Term or Long Term capital gains according to Indian income tax laws. At the time of this writing, any gain/loss realized by selling a stock after one year since buying will be Long term capital gain and the same realized within one year would be Short term capital gain.
+* It also classifies the gain/loss as Short Term or Long Term capital gains according to Indian income tax laws. At the time of this writing, any gain/loss realized by selling a stock after one year since buying will be Long term capital gain and the same realized within one year would be Short term capital gain. 
+* Indian Budget 2018 made long term capital gains taxable at 10% without indexation for shares sold on or after Apr 01, 2018. For the shares sold on or after Apr 01, 2018, the buy price is grandfathered based on the stock price on Jan 31, 2018 provided it is a long term transaction and the shares were bought before Jan 31, 2018.
 
 ## Requirements to run this code ##
 * Transactions in a CSV file in the format explained below (you can refer `sample_portfolio.csv` in the repository)
 * Python 2.7 or any version higher than that
-* _googlefinance_ library for python. If you have _pip_, it is as simple as running the command `pip install googlefinance`
-* Other libraries like `csv, json, requests, decimal, collections, texttable` are also being used.
+* _googlefinance_ library, google finance APIs were used earlier. They are not supported anymore.
+* One version was released using alphavantage APIs but these APIs do not return the data reliably requiring retries.
+* The latest version scrapes the bseindia and nseindia websites directly to get the real time market price of stocks.
+* Other libraries like `csv, json, requests, decimal, collections, texttable` are used.
 
 ## Transactions File ##
 * The first line of the file needs to contain the header given in the next line. It contains various fields that define a transaction.

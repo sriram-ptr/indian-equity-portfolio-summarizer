@@ -1,82 +1,145 @@
+#!/usr/bin/env python
+
 import time
 import re
 import json
 import requests
+import csv
+from decimal import Decimal, getcontext, ROUND_HALF_UP
+getcontext().rounding = ROUND_HALF_UP
 
-def bseindia_scraper(market, symbol):
-    # getquote_SV1.js
-    #url = "https://www.bseindia.com/SiteCache/1D/GetQuoteData.aspx?Type=EQ&text=%s" % symbol
-    #rsp = requests.get(url)
-    #next_urls = re.findall(' href\s*=\s*[\'"](.*?)[\'"]', rsp.content)
-    #assert len(next_urls) == 1
-    #url = next_urls[0]
-    assert market == 'BSE'
-    url = "https://www.bseindia.com/stock-share-price/SiteCache/IrBackupStockReach.aspx?scripcode=%s&DebtFlag=C" % symbol
-    rsp = requests.get(url)
-    price_list = re.findall('class\s*=\s*[\'"]tbmaingreen[\'"]\>(.*?)\</td\>', rsp.content) # green = positive
-    if len(price_list) == 0:
-        price_list = re.findall('class\s*=\s*[\'"]tbmainred[\'"]\>(.*?)\</td\>', rsp.content) # red = negative
-    assert len(price_list) == 1
-    return price_list[0]
+class Precision(object):
+    """
+    Avoid floating point arithmetic errors and get required precision accuracy
+    This is possible using the Decimal class
+    This class is just a wrapper over constants and functions for namespace
+    """
+    # rounding off
 
-def nseindia_scraper(market, symbol):
-    assert market == 'NSE'
-    url = 'https://www.nseindia.com/live_market/dynaContent/live_watch/get_quote/GetQuote.jsp?symbol=%s&illiquid=0&smeFlag=0&itpFlag=0' % symbol
-    headers = {
-        'Accept' : '*/*',
-        'Accept-Language' : 'en-US,en;q=0.5',
-        'Host': 'nseindia.com',
-        'Referer': "https://www.nseindia.com/live_market/dynaContent/live_watch/get_quote/GetQuote.jsp?symbol=COALINDIA.NS&illiquid=0&smeFlag=0&itpFlag=0",
-        'User-Agent' : 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:28.0) Gecko/20100101 Firefox/28.0',
-        'X-Requested-With': 'XMLHttpRequest'
-    }
-    rsp = requests.get(url, headers=headers)
-    price_list = re.findall('(\{\s*[\'"]futLink[^\r]*)\r\n', rsp.content)
-    assert len(price_list) == 1
-    price_dict = json.loads(price_list[0])
-    return price_dict['data'][0]['lastPrice']
+    DECIMAL_ZERO = Decimal(0) 
+    DECIMAL_TEN  = Decimal(10)
+    DECIMAL_HUND = Decimal(100)
+    ROUND_2 = DECIMAL_TEN ** -2
+    ROUND_3 = DECIMAL_TEN ** -3
+    ROUND_4 = DECIMAL_TEN ** -4
 
+    # various precision methods for numbers
 
-def googlefinance(market, symbol):
-    """ deprecated, not working anymore """
-    url = "https://finance.google.com/finance?q=%s:%s&output=json" % (market, symbol)
-    return '0'
+    @classmethod
+    def integer(cls, dec_x):
+        return dec_x.quantize(cls.DECIMAL_TEN, rounding=ROUND_HALF_UP)
 
-def alphavantage(market, symbol):
+    @classmethod
+    def four(cls, dec_x):
+        return dec_x.quantize(cls.ROUND_4, rounding=ROUND_HALF_UP)
 
-    def try_api_call(url, params):
-        retries = 0
-        rsp = None
-        fin_data = {}
-        while retries < 6:
-            retries += 1
-            time.sleep(2)
-            rsp = requests.get(url, params=params)
-            fin_data = {}
-            if rsp.status_code != 200:
-                print 'retry = %s, status = %s, params = %s' % (retries, rsp.status_code, params)
-                continue
-            fin_data = json.loads(rsp.content)
-            if "Error Message" in fin_data:
-                print 'retry = %s, status = %s, params = %s, data = %s' % (retries, rsp.status_code, params, fin_data)
-                continue
-            break
-        return rsp, fin_data
+    @classmethod
+    def three(cls, dec_x):
+        return dec_x.quantize(cls.ROUND_3, rounding=ROUND_HALF_UP)
 
-        time.sleep(1)
-        if market == 'BOM':
-            market = 'BSE'
-        market_price_str = '0'
-        url = "https://www.alphavantage.co/query"
-        interval = '60min'
-        params = { 'apikey': '417VIWXIWW71MYDT', 'function': 'TIME_SERIES_INTRADAY', 'market': market, 'symbol': symbol, 'interval': interval }
-        #url = "https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&apikey=417VIWXIWW71MYDT&market=%s&symbol=%s&interval=60min" % (market, symbol)
-        rsp, fin_data = try_api_call(url, params)
-        try:
-            last_refr = fin_data["Meta Data"]["3. Last Refreshed"]
-            market_price_str = fin_data["Time Series (%s)" % interval][last_refr]["4. close"]
-        except KeyError:
-            print 'ERROR %s after RETRIES: %s' % (rsp.status_code, rsp.content)
-        return market_price_str
+    @classmethod
+    def two(cls, dec_x):
+        return dec_x.quantize(cls.ROUND_2, rounding=ROUND_HALF_UP)
+
+    @classmethod
+    def percent(cls, num, den):
+        return cls.three((num * cls.DECIMAL_HUND)/den)
 
 
+class Jan31State(object):
+    """
+    * tax on LTCG announced in Budget 2018
+    * Purchase price of existing Long Term holdings to be grandfathered using Jan 31 price of the stock
+    * this class will load the Jan 31 price for NSE and BSE stocks
+    * the attributes are at the class level, object creation not expected but will continue to work
+    """
+    CSV_FILE_READ_MODE  = "rUb"
+    JAN31_PRICE_HASH    = {}
+    JAN31_NSE_FILENAME  = 'lib/NSE_20180131.csv'
+    JAN31_BSE_FILENAME  = 'lib/BSE_20180131.csv'
+    SYMBOL_INDEX        = 0
+    PRICE_INDEX         = 8
+    IS_LOADED           = False
+
+    @classmethod
+    def get_symbol_price(cls, row):
+        return row[cls.SYMBOL_INDEX], row[cls.PRICE_INDEX]
+
+    @classmethod
+    def set_jan31_price_hash(cls, filename):
+        fp = open(filename, cls.CSV_FILE_READ_MODE)
+        fp.next()
+        stock_price_hash = {
+            symbol: Precision.four(Decimal(price))
+            for (symbol, price) in map(cls.get_symbol_price, csv.reader(fp))
+        }
+        fp.close()
+        cls.JAN31_PRICE_HASH.update(stock_price_hash)
+
+    @classmethod
+    def load_31jan2018_price_hash(cls):
+        if cls.IS_LOADED == False:
+            cls.set_jan31_price_hash(cls.JAN31_NSE_FILENAME)
+            cls.set_jan31_price_hash(cls.JAN31_BSE_FILENAME)
+            cls.IS_LOADED = True
+
+    @classmethod
+    def get_price(cls, symbol):
+        cls.load_31jan2018_price_hash()
+        return cls.JAN31_PRICE_HASH[symbol]
+
+    def __init__(self):
+        self.load_31jan2018_price_hash()
+
+
+class StockExchange(object):
+    def __init__(self):
+        self.url = ''
+        self.headers = {}
+
+    def scrape(self, symbol):
+        url = self.url % symbol
+        rsp = requests.get(url, headers=self.headers)
+        return rsp
+
+
+class NSE(StockExchange):
+    def __init__(self):
+        super(NSE, self).__init__()
+        self.url = 'https://www.nseindia.com/live_market/dynaContent/live_watch/get_quote/GetQuote.jsp?symbol=%s&illiquid=0&smeFlag=0&itpFlag=0'
+        self.any_re = re.compile('(\{\s*[\'"]futLink[^\r]*)\r\n')
+        self.headers = {
+            'Accept' : '*/*', 'Accept-Language' : 'en-US,en;q=0.5', 'Host': 'nseindia.com', 'Referer': self.url % 'COALINDIA.NS',
+            'User-Agent' : 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:28.0) Gecko/20100101 Firefox/28.0', 'X-Requested-With': 'XMLHttpRequest'
+        }
+
+    def get_market_price(self, symbol):
+        rsp = self.scrape(symbol)
+        price_list = self.any_re.findall(rsp.content)
+        assert len(price_list) == 1
+        price_dict = json.loads(price_list[0])
+        return price_dict['data'][0]['lastPrice']
+
+class BSE(StockExchange):
+    def __init__(self):
+        super(BSE, self).__init__()
+        self.url = "https://www.bseindia.com/stock-share-price/SiteCache/IrBackupStockReach.aspx?scripcode=%s&DebtFlag=C"
+        self.positive_re = re.compile('class\s*=\s*[\'"]tbmaingreen[\'"]\>(.*?)\</td\>')
+        self.negative_re = re.compile('class\s*=\s*[\'"]tbmainred[\'"]\>(.*?)\</td\>')
+
+    def get_market_price(self, symbol):
+        rsp = self.scrape(symbol)
+        price_list = self.positive_re.findall(rsp.content) # tdmaingreen => positive
+        if len(price_list) == 0:
+            price_list = self.negative_re.findall(rsp.content)
+        assert len(price_list) == 1
+        return price_list[0]
+
+nse = NSE()
+bse = BSE()
+
+def get_market_price(stock_ticker):
+    market, symbol = stock_ticker.split(':')
+    obj = {'NSE': nse, 'BSE': bse}[market]
+    price_str = obj.get_market_price(symbol)
+    return Precision.three(Decimal(price_str))

@@ -2,8 +2,7 @@
 import datetime, time
 import json, requests
 import texttable
-from decimal import Decimal
-from transaction_utils import TransactionConstants
+from transaction_utils import TransactionConstants, Precision, Decimal
 
 def get_table(table_header, header_row, data):
     if not data:
@@ -87,7 +86,7 @@ class DetailsTableRow(object):
 
     @property
     def u_cgain(self):
-        return TransactionConstants.precision_3((self.s_value - self.b_value - self.b_charges)/self.shares)
+        return Precision.three((self.s_value - self.b_value - self.b_charges)/self.shares)
 
     @property
     def b_charges(self):
@@ -99,7 +98,7 @@ class DetailsTableRow(object):
 
     @property
     def b_cost(self):
-        return TransactionConstants.precision_3((self.cg_obj.buy_value + self.cg_obj.buy_charges)/self.shares)
+        return Precision.three((self.cg_obj.buy_value + self.cg_obj.buy_charges)/self.shares)
 
     @property
     def h_cost(self):
@@ -183,13 +182,13 @@ class SummaryTableRow(object):
     def j_price(self):
         if len(self.cg_obj_list) > 0:
             return self.cg_obj_list[0].jan31_price
-        return Decimal('0')
+        return Precision.DECIMAL_ZERO
 
     @property
     def b_price(self):
         if self.shares <= 0:
             import pdb; pdb.set_trace()
-        return TransactionConstants.precision_3(self.b_value/self.shares)
+        return Precision.three(self.b_value/self.shares)
 
     @property
     def h_price(self):
@@ -198,11 +197,11 @@ class SummaryTableRow(object):
     @property
     def x_price(self):
         tax_buy_value = sum([cg_obj.tax_buy_value for cg_obj in self.cg_obj_list])
-        return TransactionConstants.precision_3(tax_buy_value/self.shares)
+        return Precision.three(tax_buy_value/self.shares)
 
     @property
     def s_price(self):
-        return TransactionConstants.precision_3(self.s_value/self.shares)
+        return Precision.three(self.s_value/self.shares)
 
     @property
     def m_price(self):
@@ -218,7 +217,7 @@ class SummaryTableRow(object):
 
     @property
     def b_cost(self):
-        return TransactionConstants.precision_3((self.b_value + self.b_charges)/self.shares)
+        return Precision.three((self.b_value + self.b_charges)/self.shares)
 
     @property
     def h_cost(self):
@@ -226,11 +225,11 @@ class SummaryTableRow(object):
 
     @property
     def u_pgain(self):
-        return TransactionConstants.precision_3((self.s_value - self.b_value)/self.shares)
+        return Precision.three((self.s_value - self.b_value)/self.shares)
 
     @property
     def u_cgain(self):
-        return TransactionConstants.precision_3((self.s_value - self.b_value - self.b_charges)/self.shares)
+        return Precision.three((self.s_value - self.b_value - self.b_charges)/self.shares)
 
     @property
     def s_charges(self):
@@ -258,7 +257,7 @@ class SummaryTableRow(object):
 
     @property
     def percent(self):
-        return TransactionConstants.precision_3((self.n_gain/self.b_value) * Decimal('100'))
+        return Precision.percent(self.n_gain, self.b_value)
 
 
 class StockSummary(object):
@@ -379,7 +378,7 @@ class PortFolioSummary(object):
         if percent_index != -1:
             buy_value_index = header.index('b_value')
             net_gain_index = header.index('n_gain')
-            data_row[percent_index] = TransactionConstants.precision_3((data_row[net_gain_index]/data_row[buy_value_index]) * Decimal('100'))
+            data_row[percent_index] = Precision.three((data_row[net_gain_index]/data_row[buy_value_index]) * Decimal('100'))
         table.append(data_row)
 
     def print_summary(self):

@@ -2,17 +2,21 @@
 
 """
 * Transaction based utilities are implemented in this module
-* Includes a queue to hold transactions, constants involved in a transaction
-* Author: Sriram Ponnusamy, feel free to use and distribute
+* Author: Sriram Ponnusamy
+* Feel free to use and distribute for any good purpose with good intentions
 """
+
 import datetime
 from collections import namedtuple
 from dateutil.parser import parse as date_parse
-from decimal import Decimal, getcontext, ROUND_HALF_UP
-getcontext().rounding = ROUND_HALF_UP
+from decimal import Decimal
+from stock_exchange_tools import Precision
+
 
 class TransactionQueue(object):
-
+    """
+    queue implementation to hold transactions in a portfolio
+    """
     _ZERO = 0
 
     def __init__(self):
@@ -36,40 +40,8 @@ class TransactionQueue(object):
     def __iter__(self):
         return self.items.__iter__()
 
-class Precision(object):
-    """
-    avoid floating point errors using Decimal
-    and get required precision accuracy
-    """
 
-    # rounding off
-
-    DECIMAL_ZERO    = Decimal('0')
-    DECIMAL_TEN     = Decimal('10')
-    ROUND_2 = DECIMAL_TEN ** -2
-    ROUND_3 = DECIMAL_TEN ** -3
-    ROUND_4 = DECIMAL_TEN ** -4
-
-    # various precision methods for numbers
-
-    @classmethod
-    def precision_int(klass, dec_x):
-        return dec_x.quantize(klass.DECIMAL_TEN, rounding=ROUND_HALF_UP)
-
-    @classmethod
-    def precision_4(klass, dec_x):
-        return dec_x.quantize(klass.ROUND_4, rounding=ROUND_HALF_UP)
-
-    @classmethod
-    def precision_3(klass, dec_x):
-        return dec_x.quantize(klass.ROUND_3, rounding=ROUND_HALF_UP)
-
-    @classmethod
-    def precision_2(klass, dec_x):
-        return dec_x.quantize(klass.ROUND_2, rounding=ROUND_HALF_UP)
-
-
-class TransactionConstants(Precision):
+class TransactionConstants(object):
     """
     class defines all constants involved in a transaction
     """
@@ -94,12 +66,14 @@ class TransactionConstants(Precision):
     TERM_DAYS_DIFF  = 365
 
     # indian exchanges
-    BSE_EXCH = 'BOM'
+    BSE_EXCH = 'BSE'
     NSE_EXCH = 'NSE'
 
     # buy and sale date from when LTCG becomes taxable
     APR01_2018 = datetime.datetime(2018, 4, 1).date()
     JAN31_2018 = datetime.datetime(2018, 1, 31).date()
+
+    CSV_FILE_MODE   = 'rUb'
 
     # transaction csv file columns
     SYMBOL_F        = 'symbol'
@@ -120,92 +94,123 @@ class TransactionConstants(Precision):
         SYMBOL_F, NAME_F, TRADE_F, DATE_F, SHARES_F, PRICE_F, VALUE_F,
         BROKERAGE_F, STT_F, CHARGES_F, RECEIVABLE_F, MODE_F
     ]
-    # fields to be modified for types
-    MOD_DATE_LIST   = [DATE_F]
-    MOD_INT_LIST    = [SHARES_F]
-    MOD_PR3_LIST    = [PRICE_F, VALUE_F, BROKERAGE_F, STT_F, CHARGES_F, RECEIVABLE_F]
-    CSV_FILE_MODE   = 'rUb'
+
+    # fields to be accessed based on types or logical groups
+    AMOUNT_F_LIST   = [PRICE_F, VALUE_F, RECEIVABLE_F]
+    CHARGES_F_LIST  = [BROKERAGE_F, STT_F, CHARGES_F]
+    DATE_F_LIST     = [DATE_F]
+    INTEGER_F_LIST  = [SHARES_F]
+    PRECI3_F_LIST   = AMOUNT_F_LIST + CHARGES_F_LIST #[PRICE_F, VALUE_F, BROKERAGE_F, STT_F, CHARGES_F, RECEIVABLE_F]
 
 
+TransactionMeta = namedtuple('TransactionMeta', TransactionConstants.TRANSACTION_FIELDS)
 
-class TransactionRecord(TransactionConstants):
+class TransactionRecord(TransactionMeta, TransactionConstants):
+    """
+    namedtuple TransactionMeta class to access each field in a row as an object attribute
+    the object is immutable but we have use cases like the following. They are implmented as methods.
+        1.  transform values of certain fields after reading from the file
+        2.  scale down a partially realized buy transaction based on number of shares realized
+        3.  creating an equivalent sell transaction for an unrealized buy transaction based on today's date
+            and current market price. This makes handling realized and holding transactions uniform.
+    """
 
-    _TransactionRecord = namedtuple('_TransactionRecord', TransactionConstants.TRANSACTION_FIELDS)
+    _record_field_index = {field: index for (index, field) in enumerate(TransactionMeta._fields)}
+
+    def __new__(cls, row, transform=True):
+        """
+        overriding __new__ as TransactionMeta derives from tuple class
+        immutable object so call new again after transforming values of certain fields
+        do a validation before returning the object
+        """
+        obj = super(TransactionRecord, cls).__new__(cls, *row)
+        if transform:
+            newrow = obj.transform_namedtuple()
+            obj = super(TransactionRecord, cls).__new__(cls, *newrow)
+        obj.validate()
+        return obj
 
     @classmethod
-    def parse(klass, oldrow):
+    def create_obj_from_row(cls, row, transform=True):
         """
-        transform raw csv row coming from the transactions file
-        create namedtuple object with the transformed values
+        one more method apart from __new__ to create object as there are instance methods
+        with a need to create objects. Those instance methods can call this method. Note that
+        this method actually makes a call to __new__
         """
-        oldobj = klass._TransactionRecord(*oldrow)
-        newrow = klass.transform_namedtuple(oldobj)
-        newobj = klass._TransactionRecord(*newrow)
-        klass.validate(newobj)
-        return newobj
+        obj = cls(row, transform)
+        return obj
 
-    @classmethod
-    def transform_namedtuple(klass, obj):
+    def __repr__(self):
+        val = super(self.__class__, self).__repr__()
+        return val.replace(super(self.__class__, self).__class__.__name__, self.__class__.__name__)
+
+    def transform_namedtuple(self):
         """
-        transform incoming record with string values to required types
-        date, int and decimal numbers with required precision
+        transform string values to required types - date, decimal numbers with required precision
+        the basic object exists in __new__ to call this and hence this is made an instance method
+        this method is called from __new__, technically considered as part of object creation
+        hence, do not call create_obj_from_row from here as that would be calling __new__ again
         """
-        newrow = list(obj)
-        obj_index = obj._fields.index
-        for field in klass.MOD_DATE_LIST:
-            index = obj_index(field)
-            newrow[index] = date_parse(obj[index]).date()
-        for field in klass.MOD_INT_LIST:
-            index = obj_index(field)
-            newrow[index] = klass.precision_int(Decimal(obj[index]))
-        for field in klass.MOD_PR3_LIST:
-            index = obj_index(field)
-            newrow[index] = klass.precision_3(Decimal(obj[index]))
+        newrow = list(self)
+        rf_index = self._record_field_index
+        for index in (rf_index[field] for field in self.DATE_F_LIST):
+            newrow[index] = date_parse(self[index]).date()
+        for index in (rf_index[field] for field in self.INTEGER_F_LIST):
+            newrow[index] = Precision.integer(Decimal(self[index]))
+        for index in (rf_index[field] for field in self.PRECI3_F_LIST):
+            newrow[index] = Precision.three(Decimal(self[index]))
         return newrow
 
-    @classmethod
-    def scale_down(klass, transaction, rem_shares):
-        t_index = transaction._fields.index
-        value_index, recv_index, shares_index = map(t_index, (klass.VALUE_F, klass.RECEIVABLE_F, klass.SHARES_F))
-        charges_index_list = map(t_index, (klass.BROKERAGE_F, klass.STT_F, klass.CHARGES_F))
-        diff_ratio = rem_shares/transaction.shares
-        newt = list(transaction)
+    def scale_down(self, rem_shares):
+        """
+        scale down a partially realized buy transaction(self) based on number of shares remaining after
+        realization. shares, value and charges scaled down using the ratio rem_shares/original_shares.
+        receivable can also be scaled down but recalculation preferred for precision
+        """
+        rf_index = self._record_field_index
+        value_index, recv_index, shares_index = [rf_index[x] for x in (self.VALUE_F, self.RECEIVABLE_F, self.SHARES_F)]
+        charges_index_list = [rf_index[x] for x in self.CHARGES_F_LIST]
+        diff_ratio = rem_shares/self.shares
+        newt = list(self)
         newt[shares_index] = rem_shares
         for index in [value_index] + charges_index_list:
-            newt[index] = klass.precision_3(diff_ratio * newt[index])
+            newt[index] = Precision.three(diff_ratio * newt[index])
         charges = sum([newt[index] for index in charges_index_list])
-        newt[recv_index] = klass.precision_3(newt[value_index] - charges)
-        newobj = klass._TransactionRecord(*newt)
-        klass.validate(newobj)
-        return newobj
+        newt[recv_index] = Precision.three(newt[value_index] - charges) # receivable can also be scaled down, this is preferred for precision
+        return self.create_obj_from_row(newt, transform=False)
 
-    @classmethod
-    def get_ref_sel_transaction(klass, transaction, ref_date, market_price):
-        t_index = transaction._fields.index
-        charges_index_list = map(t_index, (klass.BROKERAGE_F, klass.STT_F, klass.CHARGES_F))
-        newt = list(transaction)
-        newt[t_index(klass.TRADE_F)] = klass.SEL
-        newt[t_index(klass.DATE_F)] = ref_date
-        newt[t_index(klass.PRICE_F)] = market_price
-        value_index = t_index(klass.VALUE_F)
-        newt[value_index] = klass.precision_3(transaction.shares * market_price)
-        for index in charges_index_list:
-            newt[index] = klass.DECIMAL_ZERO
-        newt[t_index(klass.RECEIVABLE_F)] = klass.precision_3(newt[value_index]) # charges are zero
-        newobj = klass._TransactionRecord(*newt)
-        klass.validate(newobj)
-        return newobj
+    def get_ref_sel_transaction(self, ref_date, market_price):
+        """
+        create an equivalent sell transaction for an unrealized buy transaction based on
+        today's date and current market price. Trade changed to sell, Price unchanged,
+        Charges made zero, Value and Receivable recalculated again. This method makes
+        calculation of holding gains same as the method to calculate realized gains
+        """
+        rf_index = self._record_field_index
+        newt = list(self)
+        newt[rf_index[self.TRADE_F]] = self.SEL
+        newt[rf_index[self.DATE_F]] = ref_date
+        newt[rf_index[self.PRICE_F]] = market_price
+        value_index = rf_index[self.VALUE_F]
+        newt[value_index] = Precision.three(self.shares * market_price)
+        for index in (rf_index[x] for x in self.CHARGES_F_LIST):
+            newt[index] = Precision.DECIMAL_ZERO
+        newt[rf_index[self.RECEIVABLE_F]] = Precision.three(newt[value_index]) # charges are zero
+        return self.create_obj_from_row(newt, transform=False)
 
-    @classmethod
-    def validate(klass, transaction):
-        assert transaction.symbol and transaction.name
-        assert transaction.trade in klass.TRADE_TYPES
-        assert transaction.mode in klass.MODES
-        if transaction.trade in (klass.DIV, klass.CSO, klass.CSI):
+    def validate(self):
+        """
+        just do a sanity check on various fields
+        the basic object exists in __new__ to call this and hence this is made an instance method
+        """
+        assert self.symbol and self.name
+        assert self.trade in self.TRADE_TYPES
+        assert self.mode in self.MODES
+        if self.trade in (self.DIV, self.CSO, self.CSI):
             return
-        assert transaction.shares >= 0
-        assert transaction.price > 0
-        assert transaction.brokerage >= 0
-        assert transaction.stt >= 0
-        assert transaction.charges >= 0
+        assert self.shares >= 0
+        assert self.price > 0
+        assert self.brokerage >= 0
+        assert self.stt >= 0
+        assert self.charges >= 0
 

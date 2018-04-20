@@ -2,7 +2,7 @@
 import datetime, time
 import json, requests
 import texttable
-from transaction_utils import TransactionConstants, Precision, Decimal
+from transaction_utils import Precision, Decimal
 
 def get_table(table_header, header_row, data):
     if not data:
@@ -378,7 +378,7 @@ class PortFolioSummary(object):
         if percent_index != -1:
             buy_value_index = header.index('b_value')
             net_gain_index = header.index('n_gain')
-            data_row[percent_index] = Precision.three((data_row[net_gain_index]/data_row[buy_value_index]) * Decimal('100'))
+            data_row[percent_index] = Precision.percent(data_row[net_gain_index], data_row[buy_value_index])
         table.append(data_row)
 
     def print_summary(self):

@@ -103,7 +103,7 @@ class Stock(TransactionConstants):
     """
         object to hold transactions of a particular stock
         sell transactions maintained in one queue
-        buy transactions square off, delivery are maintained in separate queues
+        buy transactions - square off and delivery are maintained in separate queues
     """
     def __init__(self, symbol, name):
         self.symbol = symbol
@@ -163,24 +163,13 @@ class Stock(TransactionConstants):
             return
         ref_date = datetime.datetime.today().date()
         market_price = get_market_price(self.symbol)
-        print self.symbol, market_price
+        #print self.symbol, market_price
         while self.dbuyq.is_empty() == False:
             buy_t = self.dbuyq.get()
             sel_t = buy_t.get_ref_sel_transaction(ref_date, market_price)
             cg_obj = CapitalGain(sel_t, buy_t)
             self.holding_list.append(cg_obj)
         assert self.dbuyq.is_empty() == True
-
-    def get_market_price1(self):
-        time.sleep(1)
-        market, symbol = self.symbol.split(':')
-        market_price = '0'
-        if market == 'BSE':
-            #market = 'BSE'
-            market_price = bseindia_scraper(market, symbol)
-        elif market == 'NSE':
-            market_price = nseindia_scraper(market, symbol)
-        return Precision.three(Decimal(market_price))
 
 
 class Portfolio(object):

@@ -91,7 +91,8 @@ class CapitalGain(TransactionConstants):
             self.short_gain = self.net_gain
         elif self.gain_type == self.LONG_TERM:
             self.long_gain = self.net_gain
-            self.tax_long_gain = self.tax_net_gain
+            if sel_t.date >= self.APR01_2018:   # else zero
+                self.tax_long_gain = self.tax_net_gain
 
     def calculate(self):
         self.set_actual_gains()

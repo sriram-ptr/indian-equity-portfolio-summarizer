@@ -107,9 +107,9 @@ class NSE(StockExchange):
     def __init__(self):
         super(NSE, self).__init__()
         self.url = 'https://www.nseindia.com/live_market/dynaContent/live_watch/get_quote/GetQuote.jsp?symbol=%s&illiquid=0&smeFlag=0&itpFlag=0'
-        self.any_re = re.compile('(\{\s*[\'"]futLink[^\r]*)\r\n')
+        self.any_re = re.compile(r'\{<div\s+id="responseDiv"\s+style="display:none">\s+(\{.*?\{.*?\}.*?\})')
         self.headers = {
-            'Accept' : '*/*', 'Accept-Language' : 'en-US,en;q=0.5', 'Host': 'nseindia.com', 'Referer': self.url % 'COALINDIA.NS',
+            'Accept' : '*/*', 'Accept-Language' : 'en-US,en;q=0.5', 'Host': 'nseindia.com', 'Referer': self.url % 'INFY',
             'User-Agent' : 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:28.0) Gecko/20100101 Firefox/28.0', 'X-Requested-With': 'XMLHttpRequest'
         }
 
@@ -123,17 +123,14 @@ class NSE(StockExchange):
 class BSE(StockExchange):
     def __init__(self):
         super(BSE, self).__init__()
-        self.url = "https://www.bseindia.com/stock-share-price/SiteCache/IrBackupStockReach.aspx?scripcode=%s&DebtFlag=C"
-        self.positive_re = re.compile('class\s*=\s*[\'"]tbmaingreen[\'"]\>(.*?)\</td\>')
-        self.negative_re = re.compile('class\s*=\s*[\'"]tbmainred[\'"]\>(.*?)\</td\>')
+        self.url = "https://api.bseindia.com/BseIndiaAPI/api/StockReachGraph/w?scripcode=%s&flag=0&fromdate=&todate=&seriesid="
 
     def get_market_price(self, symbol):
         rsp = self.scrape(symbol)
-        price_list = self.positive_re.findall(rsp.content) # tdmaingreen => positive
-        if len(price_list) == 0:
-            price_list = self.negative_re.findall(rsp.content)
-        assert len(price_list) == 1
-        return price_list[0]
+        json_rsp = json.loads(rsp.content)
+        price_str = json_rsp["CurrVal"].strip()
+        assert price_str is not None and price_str != ""
+        return price_str
 
 nse = NSE()
 bse = BSE()

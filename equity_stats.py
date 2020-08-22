@@ -2,7 +2,7 @@
 import sys
 import datetime, time
 import json, requests
-import csv, re
+import csv23, re
 
 from transaction_utils import TransactionQueue, TransactionConstants, TransactionRecord
 from transaction_utils import Decimal
@@ -191,7 +191,7 @@ class Portfolio(object):
         stock_obj.put_transaction_to_queue(transaction, False)
 
     def process_stocks(self):
-        for symbol, stock_obj in self.stock_hash.iteritems():
+        for symbol, stock_obj in self.stock_hash.items():
             stock_obj.realize_whole()
             stock_obj.holding_whole()
 
@@ -199,10 +199,10 @@ class Portfolio(object):
 def main():
     file_name = sys.argv[1]
     pf = Portfolio()
-    transactions_file = open(file_name, TransactionConstants.CSV_FILE_MODE)
-    transactions_file.next()    # skip the header
-    for transaction in map(TransactionRecord.create_obj_from_row, csv.reader(transactions_file)):
-        pf.process_transaction(transaction)
+    with csv23.open_reader(file_name) as transactions_file:
+        next(transactions_file)     # skip the header
+        for transaction in map(TransactionRecord.create_obj_from_row, transactions_file):
+            pf.process_transaction(transaction)
     pf.process_stocks()
     pfs = PortFolioSummary(pf)
     pfs.print_summary()

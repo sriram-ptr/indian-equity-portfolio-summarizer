@@ -14,8 +14,8 @@ def get_table(table_header, header_row, data):
     align_row = ['l', 'l'] + ['r'] * (len(header_row) - 2)
     table.set_cols_align(align_row)
     tbl_hdr_len = len(table_header) + 1
-    print "\n%s\n%s\n" % (table_header, '='*tbl_hdr_len)
-    print table.draw()
+    print("\n%s\n%s\n" % (table_header, '='*tbl_hdr_len))
+    print(table.draw())
 
 
 
@@ -382,7 +382,7 @@ class PortFolioSummary(object):
         table.append(data_row)
 
     def print_summary(self):
-        for symbol, stock_obj in self.pf_obj.stock_hash.iteritems():
+        for symbol, stock_obj in self.pf_obj.stock_hash.items():
             ss = stock_obj.stock_summary
             ss.print_summary()
             name = stock_obj.name.split()[0]

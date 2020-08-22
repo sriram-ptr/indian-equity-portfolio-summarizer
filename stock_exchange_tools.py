@@ -4,7 +4,7 @@ import time
 import re
 import json
 import requests
-import csv
+import csv23
 from decimal import Decimal, getcontext, ROUND_HALF_UP
 getcontext().rounding = ROUND_HALF_UP
 
@@ -67,13 +67,12 @@ class Jan31State(object):
 
     @classmethod
     def set_jan31_price_hash(cls, filename):
-        fp = open(filename, cls.CSV_FILE_READ_MODE)
-        fp.next()
-        stock_price_hash = {
-            symbol: Precision.four(Decimal(price))
-            for (symbol, price) in map(cls.get_symbol_price, csv.reader(fp))
-        }
-        fp.close()
+        with csv23.open_reader(filename) as fp:
+            next(fp)
+            stock_price_hash = {
+                symbol: Precision.four(Decimal(price))
+                for (symbol, price) in map(cls.get_symbol_price, fp)
+            }
         cls.JAN31_PRICE_HASH.update(stock_price_hash)
 
     @classmethod
@@ -107,15 +106,27 @@ class NSE(StockExchange):
     def __init__(self):
         super(NSE, self).__init__()
         self.url = 'https://www.nseindia.com/live_market/dynaContent/live_watch/get_quote/GetQuote.jsp?symbol=%s&illiquid=0&smeFlag=0&itpFlag=0'
+        self.url = 'https://www1.nseindia.com/live_market/dynaContent/live_watch/get_quote/GetQuote.jsp?symbol=%s'
         self.any_re = re.compile(r'\{<div\s+id="responseDiv"\s+style="display:none">\s+(\{.*?\{.*?\}.*?\})')
+        self.any_re = re.compile(r'<div\s+id="responseDiv"\s+style="display:none">\s+(\{.*?\{.*?\}.*?\})')
         self.headers = {
-            'Accept' : '*/*', 'Accept-Language' : 'en-US,en;q=0.5', 'Host': 'nseindia.com', 'Referer': self.url % 'INFY',
-            'User-Agent' : 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:28.0) Gecko/20100101 Firefox/28.0', 'X-Requested-With': 'XMLHttpRequest'
+            'Host': 'www1.nseindia.com', 
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:79.0) Gecko/20100101 Firefox/79.0',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            #'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Pragma': 'no-cache',
+            'Cache-Control': 'no-cache',
+            #'Referer': self.url % 'INFY',
+            #'X-Requested-With': 'XMLHttpRequest'
         }
 
     def get_market_price(self, symbol):
         rsp = self.scrape(symbol)
-        price_list = self.any_re.findall(rsp.content)
+        price_list = self.any_re.findall(rsp.content.decode())
         assert len(price_list) == 1
         price_dict = json.loads(price_list[0])
         return price_dict['data'][0]['lastPrice']
@@ -124,13 +135,27 @@ class BSE(StockExchange):
     def __init__(self):
         super(BSE, self).__init__()
         self.url = "https://api.bseindia.com/BseIndiaAPI/api/StockReachGraph/w?scripcode=%s&flag=0&fromdate=&todate=&seriesid="
+        self.url = "https://api.bseindia.com/BseIndiaAPI/api/getScripHeaderData/w?Debtflag=&scripcode=%s&seriesid="
+        self.headers = {
+                'Host': 'api.bseindia.com',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:79.0) Gecko/20100101 Firefox/79.0',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                #'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Pragma': 'no-cache',
+                'Cache-Control': 'no-cache',
+                'TE': 'Trailers'
+        }
 
     def get_market_price(self, symbol):
         rsp = self.scrape(symbol)
         json_rsp = json.loads(rsp.content)
-        price_str = json_rsp["CurrVal"].strip()
+        price_str = json_rsp["CurrRate"]["LTP"]
         assert price_str is not None and price_str != ""
-        return price_str
+        return price_str.strip()
 
 nse = NSE()
 bse = BSE()
@@ -140,3 +165,6 @@ def get_market_price(stock_ticker):
     obj = {'NSE': nse, 'BSE': bse}[market]
     price_str = obj.get_market_price(symbol)
     return Precision.three(Decimal(price_str))
+
+#print(get_market_price('NSE:GICRE'))
+#print(get_market_price('BSE:500285'))

@@ -14,11 +14,11 @@
 
 ## Requirements to run this code ##
 * Transactions in a CSV file in the format explained below (you can refer `sample_portfolio.csv` in the repository)
-* Python 2.7 or any version higher than that
+* Python 2.7 or any version higher than that. Note that the latest version works on both Python 2.7 and 3.8 versions
 * _googlefinance_ library, google finance APIs were used earlier. They are not supported anymore.
 * One version was released using alphavantage APIs but these APIs do not return the data reliably even with retries.
 * The latest version scrapes the bseindia and nseindia websites directly to get the real time market price of stocks.
-* Other libraries used are: `csv, json, requests, decimal, collections, texttable`
+* Other libraries used are: `csv23, json, requests, decimal, collections, texttable`
 
 ## Transactions File ##
 * The first line of the file needs to contain the header given in the next line. It contains various fields that define a transaction.
